@@ -791,6 +791,9 @@
 </head>
 <body>
 
+<div id="dbSetupBanner" style="display:none; background:#B8862E; color:#fff; text-align:center; padding:10px 16px; font-family:'Inter'; font-size:13px; font-weight:600;">
+  ⚠ Database not connected — changes won't be saved. Open the file and paste your Supabase URL and anon key near the top of the script (see comments).
+</div>
 <header class="top">
   <div class="top-inner">
     <div class="brand">
@@ -950,34 +953,80 @@
     return [];
   }
 
-  /* ---------- Storage ---------- */
+  /* ---------- Storage (Supabase) ----------
+     1) Create a free project at https://supabase.com
+     2) In the SQL Editor, run:
+          create table kv_store (
+            key text primary key,
+            value text,
+            updated_at timestamptz default now()
+          );
+          alter table kv_store enable row level security;
+          create policy "public read" on kv_store for select using (true);
+          create policy "public write" on kv_store for insert with check (true);
+          create policy "public update" on kv_store for update using (true);
+     3) In Project Settings > API, copy your Project URL and "anon public" key
+     4) Paste them below, replacing the two placeholder strings.
+  ------------------------------------------------------------------ */
+
+  const SUPABASE_URL = 'https://kkqefcqaeukdfezutstt.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrcWVmY3FhZXVrZGZlenV0c3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5NjkxMzcsImV4cCI6MjA5OTU0NTEzN30.JuXh3wqJl-plRi6OQpZFzNpbCbCMK6TGGPV8_gWEu1g';
+  const DB_READY = SUPABASE_URL.indexOf('PASTE_YOUR') === -1 && SUPABASE_ANON_KEY.indexOf('PASTE_YOUR') === -1;
+
+  async function dbGet(key){
+    if(!DB_READY) throw new Error('Supabase not configured');
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.${encodeURIComponent(key)}&select=value`, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      }
+    });
+    if(!res.ok) throw new Error('Supabase read failed (' + res.status + ')');
+    const rows = await res.json();
+    return rows.length ? rows[0].value : null;
+  }
+
+  async function dbSet(key, value){
+    if(!DB_READY) throw new Error('Supabase not configured');
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify([{ key, value, updated_at: new Date().toISOString() }])
+    });
+    if(!res.ok) throw new Error('Supabase write failed (' + res.status + ')');
+    return true;
+  }
 
   async function loadTools(){
     try{
-      const result = await window.storage.get(TOOLS_KEY, true);
-      tools = result && result.value ? JSON.parse(result.value) : null;
+      const raw = await dbGet(TOOLS_KEY);
+      tools = raw ? JSON.parse(raw) : null;
       if(!tools){
         tools = seedData();
         await saveTools();
       }
     }catch(e){
       tools = seedData();
-      try{ await saveTools(); }catch(e2){ /* ignore */ }
+      if(!DB_READY) showToast('Database not connected yet — showing sample data only');
     }
   }
   async function saveTools(){
     try{
-      const result = await window.storage.set(TOOLS_KEY, JSON.stringify(tools), true);
-      if(!result){ showToast('Could not save — storage unavailable'); }
+      await dbSet(TOOLS_KEY, JSON.stringify(tools));
     }catch(e){
-      showToast('Could not save changes');
+      showToast(DB_READY ? 'Could not save changes' : 'Database not connected — changes won\'t be saved');
     }
   }
 
   async function loadRentals(){
     try{
-      const result = await window.storage.get(RENTALS_KEY, true);
-      rentals = result && result.value ? JSON.parse(result.value) : null;
+      const raw = await dbGet(RENTALS_KEY);
+      rentals = raw ? JSON.parse(raw) : null;
       if(!rentals){
         rentals = seedRentals();
         await saveRentals();
@@ -988,17 +1037,16 @@
   }
   async function saveRentals(){
     try{
-      const result = await window.storage.set(RENTALS_KEY, JSON.stringify(rentals), true);
-      if(!result){ showToast('Could not save — storage unavailable'); }
+      await dbSet(RENTALS_KEY, JSON.stringify(rentals));
     }catch(e){
-      showToast('Could not save changes');
+      showToast(DB_READY ? 'Could not save changes' : 'Database not connected — changes won\'t be saved');
     }
   }
 
   async function loadSettings(){
     try{
-      const result = await window.storage.get(SETTINGS_KEY, true);
-      siteUrl = result && result.value ? result.value : '';
+      const raw = await dbGet(SETTINGS_KEY);
+      siteUrl = raw || '';
     }catch(e){
       siteUrl = '';
     }
@@ -1010,10 +1058,10 @@
     const val = document.getElementById('siteUrlInput').value.trim();
     siteUrl = val;
     try{
-      await window.storage.set(SETTINGS_KEY, val, true);
+      await dbSet(SETTINGS_KEY, val);
       showToast('Scan link saved');
     }catch(e){
-      showToast('Could not save the link');
+      showToast(DB_READY ? 'Could not save the link' : 'Database not connected yet');
     }
     updateUrlStatus();
   }
@@ -1988,6 +2036,9 @@
   });
 
   async function init(){
+    if(!DB_READY){
+      document.getElementById('dbSetupBanner').style.display = 'block';
+    }
     await loadSettings();
     await loadTools();
     await loadRentals();
